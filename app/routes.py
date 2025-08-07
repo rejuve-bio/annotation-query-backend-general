@@ -42,41 +42,11 @@ EXP = os.getenv("REDIS_EXPIRATION", 3600)  # expiration time of redis cache
 CORS(app)
 
 
-@app.route("/schema-list", methods=["GET"])
-def get_schema_list():
-    schema_list = schema_manager.schema_list
-    response = {
-        "schemas": schema_list,
-    }
-    return Response(json.dumps(response, indent=4), mimetype="application/json")
-
 
 @app.route("/schema", methods=["GET"])
 def get_schema():
-    try:
-        response = {"nodes": [], "edges": []}
-
-        schema = schema_manager.schema
-        nodes = schema["nodes"]
-        edges = schema["edges"]
-
-        for label, node in nodes.items():
-            node_input = {"label": label, "properties": node["properties"]}
-            response["nodes"].append(node_input)
-
-        for label, edge in edges.items():
-            edge_input = {
-                "label": label,
-                "source": edge["source"],
-                "target": edge["target"],
-                "properties": edge["properties"],
-            }
-            response["edges"].append(edge_input)
-        return Response(json.dumps(response, indent=4), mimetype="application/json")
-    except Exception as e:
-        logging.error(f"Error fetching schema: {e}")
-        return jsonify({"error": str(e)}), 500
-
+    response = schema_by_source()
+    return Response(json.dumps(response, indent=4), mimetype='application/json')
 
 @socketio.on("connect")
 def on_connect(args):
@@ -456,8 +426,7 @@ def load_data():
             # Add other database instances here
         }
 
-        database_type = config["database"][type]
-        db_instance = databases[database_type]()
+        db_instance = databases[type]()
 
         if type == 'cypher':
             db_instance.set_tenant_id(folder_id)
@@ -501,3 +470,79 @@ def run_query_directly():
     except Exception as e:
         logging.error(f"Error running query: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route("/load_schema", methods=["GET"])
+def get_neo4j_schema():
+    try:
+        data_path = "/"
+        # load database config
+        databases = {
+            "metta": lambda: MeTTa_Query_Generator(data_path),
+            "cypher": lambda: CypherQueryGenerator(data_path),
+            # Add other database instances here
+        }
+
+        db_instance = databases["cypher"]()
+
+        app.config["db_instance"] = db_instance
+
+        result = db_instance.get_schema()
+
+        #Load Schema
+        schema_manager.schema = result
+
+        formatted_response = json.dumps(schema_manager.schema, indent=4)
+
+        return Response(formatted_response, mimetype="application/json")
+    except Exception as e:
+        logging.error(f"Error getting schema: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def schema_by_source():
+    try:
+        response = {'schema': {'nodes': [], 'edges': []}}
+
+        schema = schema_manager.schema
+
+        for key, value in schema['nodes'].items():
+            response['schema']['nodes'].append({
+                'data': {
+                'name': value['label'],
+                'properites':[property for property in value['properties'].keys()]
+                }
+            })
+
+        for key, value in schema['edges'].items():
+            is_new = True
+            for ed in response['schema']['edges']:
+                if value['source'] == ed['data']['source'] and value['target'] == ed['data']['target']:
+                    is_new = False
+                    ed['data']['possible_connection'].append( value.get('input_label') or value.get('output_label') or 'unknown')
+            if is_new:
+                response['schema']['edges'].extend(flatten_edges(value))
+
+        return response
+    except Exception as e:
+        logging.error(f"Error fetching schema: {e}")
+        return []
+
+def node_exists(response, name):
+    name = name.strip().lower()
+    return any(n['data']['name'].strip().lower() == name for n in response['schema']['nodes'])
+
+def flatten_edges(value):
+    sources = value['source'] if isinstance(value['source'], list) else [value['source']]
+    targets = value['target'] if isinstance(value['target'], list) else [value['target']]
+    label = value.get('input_label') or value.get('output_label') or 'unknown'
+
+    return [
+        {'data': {
+            'source': src,
+            'target': tgt,
+            'possible_connection': [label]
+            }
+        for src in sources
+        for tgt in targets
+        }
+    ]

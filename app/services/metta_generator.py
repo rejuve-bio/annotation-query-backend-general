@@ -217,28 +217,33 @@ class MeTTa_Query_Generator(QueryGeneratorInterface):
         edges = []
 
         for result in results:
-            nodes.add(result['source'])
-            nodes.add(result['target'])
+            # Always add the source node
+            if "source" in result:
+                nodes.add(result["source"])
 
-            source_label = result['source'].split(' ')[0]
-            target_label = result['target'].split(' ')[0]
-            edges.append({
-                "data": {
-                    "id": self.generate_id(),
-                    "edge_id": f'{source_label}_{result["predicate"]}_{target_label}',
-                    "label": result['predicate'],
-                    "source": result['source'],
-                    "target": result['target']
-                }
-            })
+            # Only add target and edge if they exist
+            if "target" in result and "predicate" in result:
+                nodes.add(result["target"])
+                source_label = result["source"].split(" ")[0]
+                target_label = result["target"].split(" ")[0]
 
+                edges.append({
+                    "data": {
+                        "id": self.generate_id(),
+                        "edge_id": f'{source_label}_{result["predicate"]}_{target_label}',
+                        "label": result["predicate"],
+                        "source": result["source"],
+                        "target": result["target"]
+                    }
+                })
+
+        # Convert node set to list of cytoscape-style nodes
         nodes_list = []
-
         for node in nodes:
             nodes_list.append({
                 "data": {
                     "id": node,
-                    "type": node.split(' ')[0]
+                    "type": node.split(" ")[0]
                 }
             })
 

@@ -300,7 +300,7 @@ class CypherQueryGenerator(QueryGeneratorInterface):
         else:
             count_clause = ''
             for node in query_clauses['list_of_node_ids']:
-                count_clause += f"COUNT(DISTINCT {node}) AS {node}_{node_map[node]['type']}, "
+                count_clause += f"COUNT(DISTINCT {node}) AS {node}_{node_map[node]['type'].replace(' ', '_').replace(':', 'ZzZ')}, "
             return_clause = "RETURN " + count_clause.rstrip(', ')
             label_count_query = f'''{match_no_clause} {where_no_clause} {return_clause}'''
 
@@ -522,68 +522,55 @@ class CypherQueryGenerator(QueryGeneratorInterface):
         return (nodes, edges, node_to_dict, edge_to_dict, meta_data)
 
     def get_schema(self):
-        query = "CALL db.schema.visualization()"
-
+        query = """
+        MATCH (a)-[r]->(b)
+        RETURN DISTINCT
+          labels(a) AS from_labels,
+          type(r) AS rel_type,
+          labels(b) AS to_labels
+        """
         results = self.run_query(query)
 
-        results = results[0]
-
-        neo4j_nodes = results['nodes']
-        neo4j_edges = results['relationships']
-
-
         edges = {}
-
         nodes = {}
-        # process neo4j edges
-        for neo4j_edge in neo4j_edges:
-            source_node, target_node = neo4j_edge.nodes
-            source_label = next(iter(source_node.labels))
-            target_label = next(iter(target_node.labels))
 
-            nodes[source_label] = {
-                "label": source_label,
-                "properties": {
-                }
-            }
+        for result in results:
+            source_labels = result["from_labels"]
+            target_labels = result["to_labels"]
+            rel_type = result["rel_type"]
 
-            nodes[target_label] = {
-                "label": target_label,
-                "properties": {
+            # Use only the first label per node (common in most schemas)
+            source_label = source_labels[0] if source_labels else "Unknown"
+            target_label = target_labels[0] if target_labels else "Unknown"
 
-                }
-            }
+            nodes[source_label] = {"label": source_label, "properties": []}
+            nodes[target_label] = {"label": target_label, "properties": []}
 
-            id = neo4j_edge.type
-
-            if id not in edges:
-                edges[id] = {
-                    "source": next(iter(source_node.labels)),
-                    "target": next(iter(target_node.labels)),
-                    "properties": {
-
-                    }
+            if rel_type not in edges:
+                edges[rel_type] = {
+                    "source": source_label,
+                    "target": target_label,
+                    "properties": []
                 }
 
-        # Now get the properties of the nodes and eges
-        query = '''
+        query = """
         MATCH (n)
         UNWIND labels(n) AS label
         UNWIND keys(n) AS key
         RETURN label, collect(DISTINCT key) AS properties
         ORDER BY label
-        '''
-
+        """
         results = self.run_query(query)
 
         for result in results:
             label = result["label"]
             properties_arr = result["properties"]
-            properties = {key: "string" for key in properties_arr if key != "id" and key != "tenant_id"}
-            nodes[label]["properties"] = properties
+            if label in nodes:
+                nodes[label]["properties"] = properties_arr
 
         response = {
-            "nodes": nodes,
+            "nodes": list(nodes.values()),
             "edges": edges
         }
+
         return response

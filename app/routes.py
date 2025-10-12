@@ -46,6 +46,14 @@ CORS(app)
 @app.route("/schema", methods=["GET"])
 def get_schema():
     response = schema_by_source()
+    if isinstance(response, list):
+        response = {}
+        response["schema"] = schema_manager.schema
+    
+    if len(response['schema']['nodes']) == 0:
+        response = {}
+        response["schema"] = schema_manager.schema
+
     return Response(json.dumps(response, indent=4), mimetype='application/json')
 
 @socketio.on("connect")
@@ -471,7 +479,7 @@ def run_query_directly():
         logging.error(f"Error running query: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/load_schema", methods=["GET"])
+@app.route("/load-schema-external", methods=["GET"])
 def get_neo4j_schema():
     try:
         data_path = "/"

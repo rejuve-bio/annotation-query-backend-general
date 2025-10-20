@@ -20,7 +20,7 @@ llm = app.config["llm_handler"]
 EXP = os.getenv("REDIS_EXPIRATION", 3600)  # expiration time of redis cache
 
 
-def handle_client_request(query, request, node_types):
+def handle_client_request(query, request, node_types, node_map):
     annotation_id = request.get("annotation_id", None)
     # check if annotation exist
 
@@ -68,7 +68,7 @@ def handle_client_request(query, request, node_types):
             mimetype="application/json",
         )
     elif annotation_id is None:
-        title = llm.generate_title(str(query[0]))
+        title = llm.generate_title(str(query[0]), request, node_map)
         annotation = {
             "query": str(query[0]),
             "request": request,
@@ -96,7 +96,7 @@ def handle_client_request(query, request, node_types):
             mimetype="application/json",
         )
     else:
-        title = llm.generate_title(query[0])
+        title = llm.generate_title(query[0], request, node_map)
         del request["annotation_id"]
         # save the query and return the annotation
         annotation = {

@@ -134,7 +134,7 @@ def process_query():
 
         node_types = list(node_types)
 
-        return handle_client_request(query, requests, node_types)
+        return handle_client_request(query, requests, node_types, node_map)
     except Exception as e:
         logging.error(f"Error processing query: {e}")
         return jsonify({"error": (e)}), 500

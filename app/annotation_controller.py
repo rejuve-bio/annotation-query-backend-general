@@ -75,7 +75,7 @@ def handle_client_request(query, request, node_types):
             "title": title,
             "node_types": node_types,
             "status": TaskStatus.PENDING.value,
-            "job_id": app.config["job_id"],
+            "job_id": app.config.get("job_id", "N/A"),
         }
 
         annotation_id = AnnotationStorageService.save(annotation)

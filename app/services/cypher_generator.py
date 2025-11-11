@@ -9,6 +9,7 @@ import os
 from neo4j.graph import Node, Relationship
 from app.error import ThreadStopException
 import json
+import traceback
 
 load_dotenv()
 
@@ -163,11 +164,11 @@ class CypherQueryGenerator(QueryGeneratorInterface):
                 node_ids.add(target_var)
 
                 match_preds.append(
-                    f"{source_match}-[{predicate_id}:{predicate_type}]->{target_match}"
+                    f"{source_match}-[{predicate_id}:`{predicate_type}`]->{target_match}"
                 )
 
                 # Construct the MATCH clause
-                match_clause = f"MATCH {source_match}-[{predicate_id}:{predicate_type}]->{target_match}"
+                match_clause = f"MATCH {source_match}-[{predicate_id}:`{predicate_type}`]->{target_match}"
 
                 # Construct the WHERE clause if there are conditions
                 where_clause = f"WHERE {' AND '.join(tmp_where_preds)}" if len(tmp_where_preds) >= 1 else ''
@@ -290,16 +291,16 @@ class CypherQueryGenerator(QueryGeneratorInterface):
             # count query
             count_clause = ''
             for node in query_clauses['list_of_node_ids']:
-                count_clause += f"COUNT(DISTINCT {node}) AS {node}_{node_map[node]['type']}, "
+                count_clause += f"COUNT(DISTINCT {node}) AS {node}_{node_map[node]['type'].replace(':', 'ZzZ')}, "
             for edge in query_clauses['predicates']:
                 edge_id = edge['predicate_id']
-                count_clause += f"COUNT(DISTINCT {edge_id}) AS {edge_id}_{predicate_map[edge_id]['type'].replace(' ', '_')}, "
+                count_clause += f"COUNT(DISTINCT {edge_id}) AS {edge_id}_{predicate_map[edge_id]['type'].replace(' ', '_').replace(':', 'ZzZ')}, "
             return_clause = "RETURN " + count_clause.rstrip(', ')
             label_count_query = f'''{match_no_clause} {where_no_clause} {match_clause} {where_clause} {return_clause}'''
         else:
             count_clause = ''
             for node in query_clauses['list_of_node_ids']:
-                count_clause += f"COUNT(DISTINCT {node}) AS {node}_{node_map[node]['type']}, "
+                count_clause += f"COUNT(DISTINCT {node}) AS {node}_{node_map[node]['type'].replace(' ', '_').replace(':', 'ZzZ')}, "
             return_clause = "RETURN " + count_clause.rstrip(', ')
             label_count_query = f'''{match_no_clause} {where_no_clause} {return_clause}'''
 
@@ -320,9 +321,15 @@ class CypherQueryGenerator(QueryGeneratorInterface):
 
     def match_node(self, node, var_name):
         if node['id']:
-            return f"({var_name}:{node['type']} {{id: '{node['id']}', {{tenant_id: '{self.tenant_id}'}}}})"
+            if self.tenant_id:
+                return f"({var_name}:`{node['type']}` {{id: '{node['id']}', {{tenant_id: '{self.tenant_id}'}}}})"
+            else:
+                return f"({var_name}:`{node['type']}` {{id: '{node['id']}'}})"
         else:
-            return f"({var_name}:{node['type']} {{tenant_id: '{self.tenant_id}'}})"
+            if self.tenant_id:
+                return f"({var_name}:`{node['type']}` {{tenant_id: '{self.tenant_id}'}})"
+            else:
+                return f"({var_name}:`{node['type']}`)"
 
     def where_construct(self, node, var_name):
         properties = []
@@ -376,16 +383,16 @@ class CypherQueryGenerator(QueryGeneratorInterface):
                 if isinstance(item, neo4j.graph.Node):
                     node_id = f"{list(item.labels)[0]} {item['id']}"
                     if node_id not in node_dict:
+                        print("LABEL: ", list(item.labels)[0], "\n")
                         node_data = {
                             "data": {
                                 "id": node_id,
                                 "type": list(item.labels)[0],
                             }
                         }
-
                         for key, value in item.items():
                             if graph_components['properties']:
-                                if key != "id" and key != "synonyms":
+                                if key != "id" and key != "synonyms" and key != "type":
                                     node_data["data"][key] = value
                             else:
                                 if key in named_types:
@@ -393,7 +400,9 @@ class CypherQueryGenerator(QueryGeneratorInterface):
                         if "name" not in node_data["data"]:
                             node_data["data"]["name"] = node_id
                         nodes.append(node_data)
+                        print("TYPE: ", node_data["data"]["type"])
                         if node_data["data"]["type"] not in node_type:
+                            print("TYPE: ", node_data["data"]["type"])
                             node_type.add(node_data["data"]["type"])
                             node_to_dict[node_data['data']['type']] = []
                         node_to_dict[node_data['data']
@@ -417,8 +426,8 @@ class CypherQueryGenerator(QueryGeneratorInterface):
                     if temp_relation_id in visited_relations:
                         continue
                     visited_relations.add(temp_relation_id)
-
                     for key, value in item.items():
+                        print("KEY: ", type(key))
                         if key == 'source':
                             edge_data["data"]["source_data"] = value
                         else:
@@ -429,7 +438,6 @@ class CypherQueryGenerator(QueryGeneratorInterface):
                         edge_to_dict[edge_data['data']['label']] = []
                     edge_to_dict[edge_data['data']
                                  ['label']].append(edge_data)
-
         return (nodes, edges, node_to_dict, edge_to_dict)
 
     def process_result_count(self, node_and_edge_count, count_by_label, graph_components):
@@ -458,12 +466,14 @@ class CypherQueryGenerator(QueryGeneratorInterface):
             # update node count aggregate dictionary with the count of each label
             for key, value in count_by_label.items():
                 node_type_key = '_'.join(key.split('_')[1:])
+                node_type_key = node_type_key.replace('ZzZ', ':')
                 if node_type_key in node_count_aggregate:
                     node_count_aggregate[node_type_key]['count'] += value
 
             # update edge count aggregate dictionary with the count of each label
             for key, value in count_by_label.items():
                 edge_type_key = '_'.join(key.split('_')[1:])
+                edge_type_key = edge_type_key.replace('ZzZ', ':')
                 if edge_type_key in ege_count_aggregate:
                     ege_count_aggregate[edge_type_key]['count'] += value
 
@@ -510,3 +520,57 @@ class CypherQueryGenerator(QueryGeneratorInterface):
                 node_and_edge_count, count_by_label, graph_components)
 
         return (nodes, edges, node_to_dict, edge_to_dict, meta_data)
+
+    def get_schema(self):
+        query = """
+        MATCH (a)-[r]->(b)
+        RETURN DISTINCT
+          labels(a) AS from_labels,
+          type(r) AS rel_type,
+          labels(b) AS to_labels
+        """
+        results = self.run_query(query)
+
+        edges = {}
+        nodes = {}
+
+        for result in results:
+            source_labels = result["from_labels"]
+            target_labels = result["to_labels"]
+            rel_type = result["rel_type"]
+
+            # Use only the first label per node (common in most schemas)
+            source_label = source_labels[0] if source_labels else "Unknown"
+            target_label = target_labels[0] if target_labels else "Unknown"
+
+            nodes[source_label] = {"label": source_label, "properties": []}
+            nodes[target_label] = {"label": target_label, "properties": []}
+
+            if rel_type not in edges:
+                edges[rel_type] = {
+                    "source": source_label,
+                    "target": target_label,
+                    "properties": []
+                }
+
+        query = """
+        MATCH (n)
+        UNWIND labels(n) AS label
+        UNWIND keys(n) AS key
+        RETURN label, collect(DISTINCT key) AS properties
+        ORDER BY label
+        """
+        results = self.run_query(query)
+
+        for result in results:
+            label = result["label"]
+            properties_arr = result["properties"]
+            if label in nodes:
+                nodes[label]["properties"] = properties_arr
+
+        response = {
+            "nodes": list(nodes.values()),
+            "edges": edges
+        }
+
+        return response
